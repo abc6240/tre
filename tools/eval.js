@@ -16,18 +16,31 @@ const url = process.argv[2];
 const expr = process.argv[3];
 const vw = Number(process.argv[4] || 1440);
 const vh = Number(process.argv[5] || 900);
-const PORT = 9600 + (vw % 90);
+/* pick a free debug port: a stale Chrome from an earlier run can squat a fixed one */
+const net = require("net");
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
 const chrome = CANDIDATES.find((p) => fs.existsSync(p));
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "tre-eval-"));
-const child = spawn(chrome, ["--headless=new","--disable-gpu","--hide-scrollbars","--no-first-run",
-  "--remote-debugging-port=" + PORT, "--user-data-dir=" + profile, "--window-size=" + vw + "," + vh, "about:blank"], { stdio: "ignore" });
 
-const get = (p) => new Promise((res, rej) => http.get({ host: "127.0.0.1", port: PORT, path: p }, (r) => { let b = ""; r.on("data", (d) => (b += d)); r.on("end", () => res(JSON.parse(b))); }).on("error", rej));
+const get = (port, p) => new Promise((res, rej) => http.get({ host: "127.0.0.1", port, path: p }, (r) => { let b = ""; r.on("data", (d) => (b += d)); r.on("end", () => res(JSON.parse(b))); }).on("error", rej));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
+  const PORT = await freePort();
+  const child = spawn(chrome, ["--headless=new","--disable-gpu","--hide-scrollbars","--no-first-run",
+    "--remote-debugging-port=" + PORT, "--user-data-dir=" + profile, "--window-size=" + vw + "," + vh, "about:blank"], { stdio: "ignore" });
   let target;
-  for (let i = 0; i < 60 && !target; i++) { await sleep(250); try { target = (await get("/json/list")).find((t) => t.type === "page"); } catch (_) {} }
+  for (let i = 0; i < 80 && !target; i++) { await sleep(250); try { target = (await get(PORT, "/json/list")).find((t) => t.type === "page"); } catch (_) {} }
+  if (!target) { console.error("CDP did not come up on port " + PORT); child.kill(); process.exit(1); }
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   let id = 0; const pending = new Map();
   ws.addEventListener("message", (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });

@@ -1,0 +1,28 @@
+# ============================================================================
+# Cloudflare Worker — Collectr price proxy
+# ----------------------------------------------------------------------------
+#   npx wrangler login
+#   npx wrangler secret put COLLECTR_API_KEY     # paste your Collectr API key
+#   npx wrangler secret put ADMIN_TOKEN          # invent a long random password
+#   npx wrangler deploy
+#
+# Secrets are NEVER written to this file or committed to the repo. `wrangler
+# secret put` stores them encrypted on Cloudflare's side and injects them as
+# env.COLLECTR_API_KEY / env.ADMIN_TOKEN at runtime.
+# ============================================================================
+
+name = "tre-collectr-proxy"
+main = "collectr-proxy.js"
+compatibility_date = "2024-11-01"
+
+# The Worker fetches Collectr over the network. No bindings, no KV, no
+# database — the 10-minute cache uses Cloudflare's built-in Cache API, so this
+# runs comfortably inside the free tier.
+workers_dev = true
+
+[observability]
+enabled = true
+
+# Optional: pin the Worker to the free plan explicitly (no cost surprises).
+# [limits]
+# cpu_ms = 50

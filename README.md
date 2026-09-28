@@ -1,156 +1,271 @@
 # Team Rockets Exchange — showcase site
 
-A modern-luxury, mobile-first showcase for a premium Pokémon card collection.
-**No cart, no checkout, no payments.** Every purchase happens in Instagram DMs —
-each product has a **DM to Buy** button that opens the DMs with the card name
-already written out.
+A dark-luxury showcase for a premium Pokémon collection, with **live prices synced from
+Collectr** on every page load. There is no cart and no checkout — every purchase happens
+in Instagram DMs.
 
-- Instagram DM link: **https://ig.me/m/teamrocketsexchange**
-- Full inventory: **https://app.getcollectr.com/showcase/profile/@teamrocketsexchange**
+- **Live site:** https://abc6240.github.io/tre/
+- **Instagram:** https://www.instagram.com/teamrocketsexchange/
+- **Listed price:** Collectr market price **+ 10%**, rounded **up** to the whole dollar.
+- **Full inventory:** https://app.getcollectr.com/showcase/profile/@teamrocketsexchange
+
+Plain HTML/CSS/JS. No frameworks, no build step for the site itself. One small
+Cloudflare Worker holds your Collectr API key so it never reaches the browser.
 
 ---
 
-## 1. Preview it
+## Contents
 
-Everything is plain HTML/CSS/JS — no build step, no dependencies.
+1. [How the price sync works](#1-how-the-price-sync-works)
+2. [Deploy the site (GitHub Pages)](#2-deploy-the-site-github-pages)
+3. [Deploy the price Worker](#3-deploy-the-price-worker-step-by-step)
+4. [The five things you must fill in](#4-the-five-things-you-must-fill-in)
+5. [Everyday jobs](#5-everyday-jobs)
+6. [Local preview & tests](#6-local-preview--tests)
+7. [File map](#7-file-map)
 
-```bash
-node tools/serve.js          # → http://localhost:5173
+---
+
+## 1. How the price sync works
+
+```
+browser ──GET /prices?ids=…──► Cloudflare Worker ──► Collectr API
+   ▲                                  │  (holds the API key, caches 10 min)
+   └──────── { prices: { id: { market } } } ─────────┘
 ```
 
-Then open that address. (You can also just double-click `index.html`, but use
-the server: it loads `data/*.js` as real files, exactly like your host will.
-`file://` blocks that in some browsers.)
+1. The page renders **instantly** using `fallbackMarket` from `data/products.js`,
+   with the price shimmering and the note reading "Updating…".
+2. It also reads the last good response from `localStorage`, so a returning
+   visitor sees real prices with no flicker at all.
+3. It asks the Worker for every real `collectrId` (5-second timeout).
+4. Prices are **patched in place** — no re-render, no layout shift — and the
+   status line switches to *"Live prices · synced from Collectr · updated 3 min ago"*.
+5. If the Worker is down or times out, every card keeps its fallback price and
+   the status line says *"Prices last updated 2026-09-27"* instead.
 
-## 2. Put it online
+A price can never render as `$0`, `NaN` or blank at any point — bad upstream values are
+rejected and the fallback is kept.
 
-Upload the whole folder to any static host. Nothing to compile.
+**The maths lives in exactly one file, `shared/price.mjs`,** and is imported by the
+browser, the Worker and the update tool. That is deliberate: if three copies each did
+their own rounding, customers would eventually see two different prices for one card.
 
-| Host | What to do |
-| --- | --- |
-| **Netlify** | Drag the folder onto app.netlify.com/drop |
-| **Vercel** | `npx vercel --prod` in this folder |
-| **Cloudflare Pages** | Connect the repo, leave the build command empty, output dir `/` |
-| **GitHub Pages** | Push to a repo → Settings → Pages → deploy from branch root |
-| **Your own hosting** | Upload via FTP to the web root |
+---
 
-Then point your Instagram bio link at the site.
+## 2. Deploy the site (GitHub Pages)
 
-> Before uploading: run `node tools/generate-placeholders.js` once so
-> `data/photo-manifest.js` matches the photos you actually added.
+Already live. To publish a change:
 
-## 3. Add or edit cards — one file
+```bash
+git add -A
+git commit -m "Describe the change"
+git push
+```
 
-Open **`data/products.js`**. Copy a block, change the values. That's the whole
-job.
+GitHub Pages redeploys itself in about a minute. Nothing to build.
+
+---
+
+## 3. Deploy the price Worker (step by step)
+
+You need a free Cloudflare account. Total time: about 10 minutes.
+Open **PowerShell** in this folder and run the commands in order.
+
+### Step 1 — get your Collectr API key
+
+Log in to Collectr, find your API settings, and copy the key. Keep it somewhere safe.
+**Never paste it into any file in this repo** — that is what the Worker secret is for.
+
+### Step 2 — install Wrangler (Cloudflare's tool)
+
+```powershell
+npm install -g wrangler
+```
+
+Check it worked:
+
+```powershell
+wrangler --version
+```
+
+### Step 3 — log in to Cloudflare
+
+```powershell
+wrangler login
+```
+
+A browser window opens. Click **Allow**.
+
+### Step 4 — fill in the four Collectr details
+
+Open **`worker/collectr-proxy.js`**. Near the top there is a banner marked
+`ADAPTER — THE ONLY COLLECTR-SPECIFIC CODE IN THIS FILE`. Fill in the four `TODO`s
+using your Collectr API docs:
+
+| TODO | What to put | Example |
+| --- | --- | --- |
+| 1 | API base URL | `const COLLECTR_API_BASE = "https://api.collectr.com/v1";` |
+| 2 | Auth header name **and** how the key is presented | `{ name: "Authorization", value: "Bearer " + apiKey }` |
+| 3 | Endpoint path for one product id | `"/cards/" + encodeURIComponent(id) + "/prices"` |
+| 4 | Where the market price sits in the JSON | `const COLLECTR_MARKET_PATH = "data.market";` |
+
+Nothing else in the Worker or the site needs to change.
+
+> If TODO 4 is left unset the Worker will **not** silently return blank prices — every
+> id comes back in `errors` with *"market-price path is not configured yet"*.
+
+### Step 5 — put your product ids on the allowlist
+
+Still in `worker/collectr-proxy.js`, find `PRODUCT_IDS` and paste the same ids you used
+in `data/products.js`:
 
 ```js
-{
-  name: "Charizard",                       // required
-  set: "Base Set · Shadowless",            // required
-  category: "graded",                      // required: graded | vintage | modern | sealed
-  image: "assets/products/charizard-base-set.jpg",   // required
-  grade: "PSA 9",                          // optional — slabs
-  condition: "Near Mint",                  // optional — raw cards
-  price: "DM for price",                   // optional — e.g. "$1,250"
-  meta: "Holo · 1999",                     // optional — small line under the name
-  badge: "GRAIL",                          // optional — gold corner ribbon
-  featured: true,                          // show in the Featured Vault grid
-  sold: true                               // optional — adds a SOLD sash, hides DM button
-}
+const PRODUCT_IDS = ["1234567", "2345678", "3456789"];
 ```
 
-**How the vault grid behaves**
+Without this the Worker refuses every request, so nobody can spend your Collectr quota.
 
-- No category selected → shows every card marked `featured: true`.
-- Pick a category from the **Categories** section → shows *that whole drawer*,
-  featured or not, plus a filter bar with a "Show everything" reset.
-- Mark a card `sold: true` and it stays visible with a SOLD sash and an
-  "ask about similar" DM button — good social proof, still a sales lead. Remove
-  it from the grid entirely by deleting the block (or dropping `featured`).
+### Step 6 — set the two secrets
 
-Edit the four **category names and blurbs** in the `CATEGORIES` array at the top
-of the same file.
-
-### Prices
-
-`price` accepts anything: `"$1,250"`, `"$480 shipped"`, or `"DM for price"`.
-Keep it as `"DM for price"` to negotiate privately — the site never shows a
-number the card doesn't declare.
-
-## 4. Add product photos
-
-1. Drop your photo into **`assets/products/`**.
-2. Name it to match the `image:` value in `data/products.js`.
-3. Run `node tools/generate-placeholders.js`.
-
-That last step writes `data/photo-manifest.js`, which lists the photos that
-exist. Cards without a photo cost **zero network requests** and draw a branded
-gold-monogram placeholder instead — so the site never shows a broken image while
-you're still photographing inventory.
-
-Square images (1:1) look best; keep them under ~300 KB for fast loading, ideally
-`.jpg` or `.webp`. Everything is lazy-loaded.
-
-## 5. Files
-
+```powershell
+cd worker
+wrangler secret put COLLECTR_API_KEY
 ```
-index.html                     all six sections + the product lightbox
-assets/css/style.css           the whole design system (tokens at the top)
-assets/js/main.js              rendering, filtering, lightbox, animations
-data/products.js               ← YOUR INVENTORY — the only file you edit
-data/photo-manifest.js         generated — which photos exist on disk
-assets/brand/monogram.svg      the "R" crest (also used as the logo source)
-assets/brand/favicon.svg       browser tab icon
-assets/products/               your product photos go here
-assets/products/_placeholders/ preview placeholders (reference only, safe to delete)
-tools/                         helper scripts (see below)
+Paste your Collectr API key when prompted and press Enter. It is stored encrypted on
+Cloudflare and never written to disk.
+
+```powershell
+wrangler secret put ADMIN_TOKEN
+```
+Invent a long random password (this is what unlocks `?fresh=1`). Save it somewhere.
+
+### Step 7 — deploy
+
+```powershell
+wrangler deploy
 ```
 
-### The design
+It prints your Worker URL:
 
-Everything visual is driven by CSS variables at the top of `assets/css/style.css`:
-
-```css
---crimson: #c1121f;   /* the red */
---gold:    #d8b672;   /* accents, rules, eyebrows */
---champagne: #f0dfb8; /* headline gradient */
---black:   #050506;   /* page base */
+```
+https://tre-collectr-proxy.<your-subdomain>.workers.dev
 ```
 
-Change those and the entire site re-themes. Headings are Cormorant Garamond,
-body text is Inter, both loaded from Google Fonts with system fallbacks — swap
-the `<link>` in `index.html` to change them.
+### Step 8 — test it
 
-## 6. Helper scripts (optional)
+```powershell
+curl "https://tre-collectr-proxy.<your-subdomain>.workers.dev/prices?ids=1234567"
+```
 
-All dependency-free Node scripts used to build and check the site:
+You want to see `"prices":{"1234567":{"market":123.45}}`. If you see an `errors` array,
+read the message — it names the exact problem (bad key, bad path, id not allowlisted).
+
+### Step 9 — point the site at it
+
+Open **`data/products.js`** and set:
+
+```js
+const TRE_CONFIG = {
+  PRICE_API: "https://tre-collectr-proxy.<your-subdomain>.workers.dev/prices",
+  MARKUP: 1.10,
+  CURRENCY: "USD",
+};
+```
+
+Then commit and push (section 2). The status line under **Inventory** should now read
+*"Live prices · synced from Collectr"* within a few seconds of loading.
+
+---
+
+## 4. The five things you must fill in
+
+| # | Where | What | Done when |
+| --- | --- | --- | --- |
+| 1 | `worker/collectr-proxy.js` — TODO 1–4 | Collectr base URL, auth header, endpoint path, market-price path | `curl` test returns a `market` number |
+| 2 | `worker/collectr-proxy.js` — `PRODUCT_IDS` | Every collectrId you use | Worker stops returning `rejected` |
+| 3 | Cloudflare secrets | `COLLECTR_API_KEY` and `ADMIN_TOKEN` | `wrangler secret list` shows both |
+| 4 | `data/products.js` — `TRE_CONFIG.PRICE_API` | Your deployed Worker URL | Status line reads *"Live prices"* |
+| 5 | `data/products.js` — `collectrId` on all 18 products | Each card's Collectr id (currently `"TODO"`) | Every card updates from the network |
+
+Until #5 is done, cards with `collectrId: "TODO"` are skipped by the sync and simply
+keep their fallback price — the site never breaks and never shows a wrong number.
+
+---
+
+## 5. Everyday jobs
+
+**Add or edit a card** — edit `data/products.js` only. Copy a block, change the values.
+Fields: `slug` (matches the image filename), `name`, `set`, `number`, `category`
+(`Graded`/`Vintage`/`Modern`/`Sealed`), `grade`, `collectrId`, `fallbackMarket`,
+optional `badge`, `featured`. Then add the same id to `PRODUCT_IDS` in the Worker.
+
+**Add a product photo** — put your file at `assets/products/<slug>.jpg`, then update the
+`src` in `assets/js/main.js` (function `imageFor`) to point at `.jpg` instead of the
+placeholder SVG. Until then the branded placeholder SVG is the product image.
+
+**Refresh the offline fallback prices** (do this weekly):
 
 ```bash
-node tools/serve.js                    # local preview server
-node tools/generate-placeholders.js    # sync photo manifest + previews (--force to redo)
-node tools/qa.js http://localhost:5173 # 36 end-to-end checks: filters, lightbox, keyboard,
-                                       # focus handling, mobile nav, overflow, console errors
-node tools/shot.js <url> out.png 390 844 full   # screenshot the page at any width
-node tools/inspect.js <url> 1440 900            # print computed grid/viewport geometry
+node tools/update-fallback.js --dry-run   # preview
+node tools/update-fallback.js             # rewrite data/products.js
+git add data/products.js && git commit -m "Refresh fallback prices" && git push
 ```
 
-`qa.js` exits non-zero on failure, so it works as a pre-deploy check or in CI.
+**Force an instant refresh** (bypasses the 10-minute cache):
 
-## 7. What's built in
+```bash
+curl "https://<your-worker>.workers.dev/prices?ids=1234567&fresh=1&token=<ADMIN_TOKEN>"
+```
 
-- **Mobile-first**, no horizontal overflow at any width, 4/3/2/1-up card grid.
-- **Fast**: no frameworks, no build, lazy images, single CSS file, ~11 KB of JS.
-- **Accessible**: keyboard-operable card grid, `Esc` closes the lightbox, focus
-  returns to the card you opened, `aria-modal` dialog, visible focus rings,
-  skip link, and full `prefers-reduced-motion` support.
-- **Resilient**: missing photos fall back to branded art, no console errors.
+**Change the markup** — one number, `MARKUP` in `data/products.js`. The Worker imports
+the same maths, so the site and the tool always agree.
 
-## 8. Notes
+---
 
-- This is a **fan-styled showcase**. It is not affiliated with, endorsed by, or
-  sponsored by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company,
-  and it deliberately uses no official logos or artwork. That disclaimer is in
-  the footer — please leave it there.
-- Availability, pricing, payment and shipping are all handled privately in DMs.
-  The site holds no customer data and has no backend.
+## 6. Local preview & tests
+
+```bash
+node tools/serve.js                      # → http://localhost:5173
+node tools/test-prices.mjs               # 78 checks: price maths + Worker handler
+node tools/qa.js http://localhost:5173   # 88 checks in a real browser
+```
+
+`test-prices.mjs` stubs the Collectr adapter, so it verifies batching, the allowlist,
+the 10-minute cache, the admin-gated `?fresh=1`, partial failures and the CORS rules
+**without needing any credentials**. `qa.js` covers layout, filtering, sorting, the
+lightbox, keyboard support, 360px mobile, and the full sync path against a mock Worker
+(including what happens when the Worker is dead).
+
+Both exit non-zero on failure, so they work as a pre-deploy gate.
+
+---
+
+## 7. File map
+
+```
+index.html                     markup, meta tags, both grids, lightbox
+assets/css/style.css           the whole design system (tokens at the top)
+assets/js/main.js              rendering, live price sync, filters, sort, lightbox
+shared/price.mjs               THE price maths — markup, rounding, validation
+data/products.js               ← your catalog + config (the file you edit)
+worker/collectr-proxy.js       Cloudflare Worker: the only thing holding your API key
+worker/wrangler.toml           Worker config
+tools/update-fallback.js       refresh fallbackMarket from the live Worker
+tools/test-prices.mjs          78 checks (maths + Worker)
+tools/qa.js                    88 browser checks
+tools/serve.js                 local preview server
+assets/products/_placeholders/ the product images (one SVG per product slug)
+assets/brand/                  monogram + favicon
+fixture.html                   test-only page used by tools/qa.js (noindex)
+```
+
+### Notes
+
+- **The API key is never in this repo.** It lives as an encrypted Worker secret. The
+  browser only ever talks to your Worker, and the Worker only answers your site and
+  `localhost`.
+- **Pricing** is Collectr market + 10%, rounded up to the dollar, calculated in integer
+  cents so floating-point noise can never add a phantom dollar.
+- **Fan-styled. Not affiliated with or endorsed by Nintendo, Creatures Inc.,
+  GAME FREAK, or The Pokémon Company.** No official logos or Pokéball marks are used.
