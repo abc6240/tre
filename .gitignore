@@ -1,0 +1,10 @@
+# dev-only artifacts
+.shots/
+*.log
+.DS_Store
+Thumbs.db
+node_modules/
+
+# your real product photos are fine to commit — this only ignores the
+# generated preview placeholders if you'd rather keep the repo tidy
+# assets/products/_placeholders/
