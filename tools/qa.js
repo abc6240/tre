@@ -196,6 +196,17 @@ const section = (t) => console.log("\n— " + t + " —");
   check("tap targets >= 44px", await evalJS(`[...document.querySelectorAll('.chip, .nav-toggle, .sticky-dm, .card-cta, .brand, .sort-select')].every(e=>e.getBoundingClientRect().height>=43.5)`), await evalJS(`[...document.querySelectorAll('.chip, .nav-toggle, .sticky-dm, .card-cta, .brand, .sort-select')].map(e=>Math.round(e.getBoundingClientRect().height)).join(',')`));
 
   /* ===================== live sync against a real mock Worker ============ */
+  /* Only meaningful when the page itself is local: Chrome's Private Network
+     Access policy forbids a public origin (github.io) from fetching a loopback
+     address, so a deployed page can never reach this mock. Against a remote URL
+     we skip the block and say so, rather than reporting false failures. */
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(url);
+  if (!isLocal) {
+    section("live price sync — SKIPPED");
+    console.log("  skipped: needs a local origin (run: node tools/serve.js, then");
+    console.log("  node tools/qa.js http://localhost:5173). A deployed page cannot");
+    console.log("  be pointed at a loopback mock — Chrome blocks it by design.");
+  } else {
   section("live price sync (mock Worker on 127.0.0.1:5199)");
   const mockCalls = [];
   const mock = http.createServer((req, res) => {
@@ -275,6 +286,7 @@ const section = (t) => console.log("\n— " + t + " —");
   check("no blank / NaN / $0 on failure", failedPrices.every((t) => /^\$[1-9][\d,]*$/.test(t)), failedPrices.filter((t) => !/^\$[1-9][\d,]*$/.test(t)).join(", "));
   check("status falls back to the last-updated line", await evalJS(`/last updated/i.test(document.querySelector('[data-price-status-text]').textContent)`), await evalJS(`document.querySelector('[data-price-status-text]').textContent`));
   check("status state is not live", (await evalJS(`document.querySelector('[data-price-status]').getAttribute('data-state')`)) !== "live");
+  }
 
   /* ===================== console ===================== */
   section("console & requests");
